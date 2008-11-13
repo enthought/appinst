@@ -6,6 +6,7 @@ import copy
 import os
 import shutil
 import sys
+import time
 import warnings
 import xml.etree.ElementTree as et
 
@@ -13,10 +14,21 @@ from appinst.platforms.freedesktop import (filesystem_escape,
     make_desktop_entry, make_directory_entry)
 from appinst.platforms.shortcut_creation_error import ShortcutCreationError
 
+DOCTYPE="""<!DOCTYPE Menu
+  PUBLIC '-//freedesktop//DTD Menu 1.0//EN'
+  'http://standards.freedesktop.org/menu-spec/menu-1.0.dtd'>
+"""
 
-class RH4(object):
+USER_MENU_FILE ="""
+<Menu>
+    <Name>Applications</Name>
+    <MergeFile type="parent">/etc/xdg/menus/applications.menu</MergeFile>
+</Menu>
+"""
+
+class RH5(object):
     """
-    A class for application installation operations on RH4.
+    A class for application installation operations on RH5.
 
     """
 
@@ -34,7 +46,7 @@ class RH4(object):
         """
 
         # NOTE: Our installation mechanism works for both KDE and Gnome as
-        # shipped with RH 4.
+        # shipped with RH 5.
 
         try:
             if mode == 'system':
@@ -105,12 +117,10 @@ class RH4(object):
         # add the sub-menus to them, which means we need to record where each
         # one was on the disk, plus its tree (to be able to write it), plus the
         # parent menu element.
-        # FIXME: xml.etree doesn't seem to support preserving or setting of
-        # DOCTYPE.   We may have to switch to a different xml lib?
-        menu_dir = os.path.join(sysconfdir, 'menus', 'applications-merged')
+        menu_dir = os.path.join(sysconfdir, 'menus')
         menu_map = {}
         for menu_spec in menus:
-            menu_file = os.path.join(menu_dir, '%s.menu' % menu_spec['id'])
+            menu_file = os.path.join(menu_dir, '%s.menu' % 'applications')
 
             # Ensure any existing version is a file.
             if os.path.exists(menu_file) and not os.path.isfile(menu_file):
@@ -119,6 +129,11 @@ class RH4(object):
             # Ensure any existing file is actually a menu file.
             if os.path.isfile(menu_file):
                 try:
+                    # Make a backup of the menu file to be edited
+                    cur_time = time.strftime('%Y%m%d%H%M%S')
+                    backup_menu_file = "%s.%s" % (menu_file, cur_time)
+                    shutil.copyfile(menu_file, backup_menu_file)
+
                     tree = et.parse(menu_file)
                     root = tree.getroot()
                     if root is None or root.tag != 'Menu':
@@ -128,9 +143,11 @@ class RH4(object):
 
             # Create a new menu file if one doesn't yet exist.
             if not os.path.exists(menu_file):
-                root = et.XML('<Menu/>')
-                tree = et.ElementTree(root)
-                tree.write(menu_file)
+                f = open(menu_file, 'w')
+                f.write(USER_MENU_FILE)
+                f.close()
+                tree = et.parse(menu_file)
+                root = tree.getroot()
 
             # Record info about the menu file for use when actually creating the
             # menu records.  We need the path to the file, the tree (so
@@ -186,7 +203,16 @@ class RH4(object):
         # Write out any shortcuts
         location = os.path.join(datadir, 'applications')
 
-        # Install menu items
+        # Restore DOCTYPE, as the xml lib leaves it out.
+        fin = open(menu_file)
+        file_xml = fin.read()
+        fin.close()
+        file_xml = DOCTYPE + file_xml
+        fout = open(menu_file, 'w')
+        fout.write(file_xml)
+        fout.close()
+
+        # Intall the menus
         self._install_gnome_desktop_entry(shortcuts, location)
         self._install_kde_desktop_entry(shortcuts, location)
 
