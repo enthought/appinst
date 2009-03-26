@@ -2,6 +2,7 @@
 # All rights reserved.
 
 
+import appinst.platforms.linux_common as common
 import os
 import shutil
 import sys
@@ -10,6 +11,7 @@ import warnings
 from appinst.platforms.freedesktop import (filesystem_escape,
     make_desktop_entry, make_directory_entry)
 from appinst.platforms.shortcut_creation_error import ShortcutCreationError
+from distutils.sysconfig import get_python_lib
 from xml.etree import ElementTree
 
 
@@ -32,7 +34,8 @@ class RH3(object):
 
         """
 
-        # Try installing KDE shortcuts.
+        # Try installing KDE shortcuts.  We don't raise an exception on an
+        # error because we don't know if this user has KDE installed.
         try:
             if mode == 'system':
                 self._install_kde_system_application_menus(menus, shortcuts)
@@ -41,7 +44,8 @@ class RH3(object):
         except ShortcutCreationError, ex:
             warnings.warn(ex.message)
 
-        # Try a Gnome install
+        # Try installing Gnome shortcuts.  We don't raise an exception on an
+        # error because we don't know if this user has Gnome installed.
         try:
             if mode == 'system':
                 self._install_gnome_system_application_menus(menus, shortcuts)
@@ -88,23 +92,31 @@ class RH3(object):
         """
 
         for spec in shortcuts:
-            dict = spec.copy()
+            spec_dict = spec.copy()
 
-            # Replace any 'FILEBROWSER' placeholder in the command with the
-            # specified value.
+            # Handle the special placeholders in the specified command.  For a
+            # filebrowser requiest, we simply used the passed filebrowser.  But
+            # for a webbrowser request, we invoke the Python standard lib's
+            # webbrowser script so we can force the url(s) to open in new tabs.
             cmd = spec['cmd']
-            cmd[0] = cmd[0].replace('{{FILEBROWSER}}', filebrowser)
-            dict['cmd'] = cmd
+            if cmd[0] == '{{FILEBROWSER}}':
+                cmd[0] = filebrowser
+            elif cmd[0] == '{{WEBBROWSER}}':
+                python_path = os.path.join(sys.prefix, 'bin', 'python')
+                script_path = os.path.abspath(os.path.join(get_python_lib(),
+                    '..', 'webbrowser.py'))
+                cmd[0:1] = [python_path, script_path, '-t']
+            spec_dict['cmd'] = cmd
 
             # Remove the categories if they weren't desired.
             if not write_categories:
-                del dict['categories']
+                del spec_dict['categories']
 
             # Handle the situation where the shortcut is supposed to be in
             # multiple categories.
             for category in spec['categories']:
-                dict['location'] = category_map[category]
-                make_desktop_entry(dict)
+                spec_dict['location'] = category_map[category]
+                make_desktop_entry(spec_dict)
 
         return
 
@@ -156,10 +168,11 @@ class RH3(object):
 
         # Create the necessary representations for each menu being installed.
         category_map = {'': vfolder_dir}
-        queue = [(menu_spec, app_folder_element, vfolder_dir, '') for menu_spec
-            in menus]
+        queue = [(menu_spec, app_folder_element, vfolder_dir, '', '') \
+            for menu_spec in menus]
+        id_map = {}
         while len(queue) > 0:
-            menu_spec, parent_element, parent_dir, parent_category = \
+            menu_spec, parent_element, parent_dir, parent_category, parent_id = \
                 queue.pop(0)
             name = menu_spec['name']
 
@@ -172,12 +185,20 @@ class RH3(object):
                     os.remove(path)
                 os.mkdir(path)
 
+            # Build an id based on the menu hierarchy that's to be prepended
+            # to the id of each shortcut based on where that shortcut fits
+            # in the menu.
+            menu_id = common.build_id(menu_spec['id'], parent_id)
+ 
             # Map the category for this menu to its directory path.
             category = menu_spec.get('category',
                 menu_spec.get('id').capitalize())
             if len(parent_category) > 1:
                 category = '%s.%s' % (parent_category, category)
             category_map[category] = path
+
+            # Keep track of which IDs match which categories
+            id_map[category] = menu_id
 
             # Create a directory entry file for the current menu.  Because we
             # put all these directly in the vfolder_dir, we base the filename
@@ -201,14 +222,18 @@ class RH3(object):
 
             # Add any child sub-menus onto the queue.
             for child_spec in menu_spec.get('sub-menus', []):
-                queue.append((child_spec, cur_element, path, category))
+                queue.append((child_spec, cur_element, path, category, menu_id))
 
         # We are done with the vfolder, write it back out
         info_tree.write(vfolder_info)
 
+        # Adjust the IDs of the shortcuts to match where the shortcut fits in
+        # the menu.
+        common.fix_shortcut_ids(shortcuts, id_map)
+
         # Write out any shortcuts
-        file_browser = "nautilus"
-        self._install_desktop_entry(shortcuts, category_map, file_browser,
+        filebrowser = "nautilus"
+        self._install_desktop_entry(shortcuts, category_map, filebrowser,
             write_categories = True)
 
         return
@@ -293,9 +318,10 @@ class RH3(object):
         # the directory location in a map against the category specification
         # for the menu.
         category_map = {'':applnk_dir}
-        queue = [(applnk_dir, menu_spec, '') for menu_spec in menus]
+        queue = [(applnk_dir, menu_spec, '', '') for menu_spec in menus]
+        id_map = {}
         while len(queue) > 0:
-            root_dir, menu_spec, parent_category = queue.pop(0)
+            root_dir, menu_spec, parent_category, parent_id = queue.pop(0)
 
             # Create the directory for the current menu overwriting any file
             # of the same name.
@@ -306,6 +332,11 @@ class RH3(object):
                     os.remove(path)
                 os.mkdir(path)
 
+            # Build an id based on the menu hierarchy that's to be prepended
+            # to the id of each shortcut based on where that shortcut fits
+            # in the menu.
+            menu_id = common.build_id(menu_spec['id'], parent_id)
+
             # Map the category for this menu to its directory path.
             category = menu_spec.get('category',
                 menu_spec.get('id').capitalize())
@@ -313,13 +344,20 @@ class RH3(object):
                 category = '%s.%s' % (parent_category, category)
             category_map[category] = path
 
+            # Keep track of which IDs match which categories
+            id_map[category] = menu_id
+
             # Add any child sub-menus onto the queue.
             for child_spec in menu_spec.get('sub-menus', []):
-                queue.append((path, child_spec, category))
+                queue.append((path, child_spec, category, menu_id))
+
+        # Adjust the IDs of the shortcuts to match where the shortcut fits in
+        # the menu.
+        common.fix_shortcut_ids(shortcuts, id_map)
 
         # Write out any shortcuts
-        file_browser = "kfmclient openURL"
-        self._install_desktop_entry(shortcuts, category_map, file_browser)
+        filebrowser = "kfmclient openURL"
+        self._install_desktop_entry(shortcuts, category_map, filebrowser)
 
         # Force the menus to refresh.
         retcode = os.system('kbuildsycoca')

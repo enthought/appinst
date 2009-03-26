@@ -78,10 +78,11 @@ def _get_install_type():
 
 
 def _get_all_users_desktop_directory():
-    if platform.version().startswith('5'):
+    # FIXME: These should probably use Vista-specific constants when possible.
+    # This will require determining whether or not they can be imported from
+    # wininst.c (they're in knownfolders.h).
+    if platform.version().startswith('5') or platform.version().startswith('6'):
         return wininst.get_special_folder_path('CSIDL_COMMON_DESKTOPDIRECTORY')
-    if platform.version().startswith('6'):
-        return wininst.get_special_folder_path('FOLDERID_PublicDesktop')
     else:
         #hmm, not XP or Vista
         raise InstallError('Unsupported Windows Version: %s' %
@@ -89,10 +90,8 @@ def _get_all_users_desktop_directory():
 
 
 def _get_current_user_desktop_directory():
-    if platform.version().startswith('5'):
+    if platform.version().startswith('5') or platform.version().startswith('6'):
         return wininst.get_special_folder_path('CSIDL_DESKTOPDIRECTORY')
-    if platform.version().startswith('6'):
-        return wininst.get_special_folder_path('FOLDERID_Desktop')
     else:
         #hmm, not XP or Vista
         raise InstallError('Unsupported Windows Version: %s' %
@@ -105,12 +104,10 @@ def _get_all_users_quick_launch_directory():
 
 
 def _get_current_user_quick_launch_directory():
-    if platform.version().startswith('5'):
+    if platform.version().startswith('5') or platform.version().startswith('6'):
         appdata = wininst.get_special_folder_path('CSIDL_APPDATA')
         return os.path.join(appdata, "Microsoft", "Internet Explorer",
             "Quick Launch")
-    if platform.version().startswith('6'):
-        return wininst.get_special_folder_path('FOLDERID_QuickLaunch')
     else:
         #hmm, not XP or Vista
         raise InstallError('Unsupported Windows Version: %s' %
@@ -172,7 +169,7 @@ def append_to_reg_path( new_dir ) :
     # open key for reading, to save and print out old value
     try:
         key = _winreg.OpenKey(reg, environ_key_path )
-        old_path = _winreg.QueryValueEx( key, "path" )[0]
+        old_path = _winreg.QueryValueEx( key, "Path" )[0]
         _winreg.CloseKey( key )
     except WindowsError:
         old_path = ""
@@ -180,18 +177,22 @@ def append_to_reg_path( new_dir ) :
     # reopen key for writing new value
     key = _winreg.OpenKey(reg, environ_key_path, 0, _winreg.KEY_ALL_ACCESS )
 
-    # Check if the new dir has already been included in the old 'path' value
-    add_path = not new_dir in old_path.split(';')
-    if add_path:
-        new_path = "%s;%s" % (old_path, new_dir)
+    #  Check if the new dir has already been included in the old 'path' value
+    path_exists = False
+    for path_dir in old_path.split(';'):
+        if path_dir.lower() == new_dir.lower():
+            path_exists = True
+
+    if not path_exists:
+        new_path = "%s;%s" % (old_path.strip(';'), new_dir)
 
         # append new_dir to the PATH
-        _winreg.SetValueEx( key, "path", 0, _winreg.REG_EXPAND_SZ, new_path )
+        _winreg.SetValueEx( key, "Path", 0, _winreg.REG_EXPAND_SZ, new_path )
 
     _winreg.CloseKey( key )
     _winreg.CloseKey( reg )
 
-    if add_path:
+    if not path_exists:
         try:
             refreshEnvironment()
         except:
@@ -261,10 +262,8 @@ def append_to_reg_pathext():
 
 
 def get_all_users_programs_start_menu():
-    if platform.version().startswith('5'):
+    if platform.version().startswith('5') or platform.version().startswith('6'):
         return wininst.get_special_folder_path('CSIDL_COMMON_PROGRAMS')
-    if platform.version().startswith('6'):
-        return wininst.get_special_folder_path('FOLDERID_CommonPrograms')
     else:
         #hmm, not XP or Vista
         raise InstallError('Unsupported Windows Version: %s' %
@@ -272,26 +271,31 @@ def get_all_users_programs_start_menu():
 
 
 def get_current_user_programs_start_menu():
-    if platform.version().startswith('5'):
+    if platform.version().startswith('5') or platform.version().startswith('6'):
         return wininst.get_special_folder_path('CSIDL_PROGRAMS')
-    if platform.version().startswith('6'):
-        return wininst.get_special_folder_path('FOLDERID_Programs')
     else:
         #hmm, not XP or Vista
         raise InstallError('Unsupported Windows Version: %s' %
             platform.version())
 
 
-def remove_from_reg_path( remove_dir ) :
+def remove_from_reg_path(remove_dir, install_mode='user') :
     """
-    removes a current directory from the registry PATH value
+    Removes a directory from the PATH environment variable. If the directory
+    exists more than once on the path, all instances of that directory are
+    removed.
+    
+    remove_dir      The directory to be removed from the PATH.
+    install_mode    Determines which environment to modify. If 'system' is
+                    given, the PATH variable in HKLM is modified. If 'user'
+                    is given, the PATH variable in HKCU is modified.
     """
 
     if platform.uname()[0] != 'Windows':
         return
 
     # determine where the environment registry settings are
-    if _get_install_type() == ALL_USERS:
+    if install_mode == 'system':
         reg = _winreg.ConnectRegistry( None, _winreg.HKEY_LOCAL_MACHINE )
         environ_key_path = ("SYSTEM\\CurrentControlSet\\Control\\"
             "Session Manager\\Environment")
@@ -301,7 +305,7 @@ def remove_from_reg_path( remove_dir ) :
 
     # open key for reading, to save and print out old value
     key = _winreg.OpenKey(reg, environ_key_path )
-    old_path = _winreg.QueryValueEx( key, "path" )[0]
+    old_path = _winreg.QueryValueEx( key, "Path" )[0]
     _winreg.CloseKey( key )
 
     # reopen key for writing new value
@@ -311,17 +315,17 @@ def remove_from_reg_path( remove_dir ) :
     changed_path_value = False
     new_path = ""
     for path in old_path.split( ';' ):
-        if new_path == "":
-            new_path = path
-        elif path == remove_dir.lower():
+        if path.lower() == remove_dir.lower():
             changed_path_value = True
-            continue
         else:
-            new_path = "%s;%s" % ( new_path, path )
+            new_path += path + ';'
+            
+    # Remove the trailing semicolon
+    new_path = new_path[:-1]
 
     # assign new_path to the PATH only if the old_path has been modified.
     if changed_path_value:
-        _winreg.SetValueEx( key, "path", 0, _winreg.REG_EXPAND_SZ, new_path )
+        _winreg.SetValueEx( key, "Path", 0, _winreg.REG_EXPAND_SZ, new_path )
 
     _winreg.CloseKey( key )
     _winreg.CloseKey( reg )
