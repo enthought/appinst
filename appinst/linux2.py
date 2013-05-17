@@ -188,12 +188,9 @@ class Menu(object):
 
 class ShortCut(object):
 
-    fn_pat = re.compile(r'[\w.-]+$')
-
     def __init__(self, menu, shortcut, prefix=None):
         # note that this is the path WITHOUT extension
         fn = menu.name_ + shortcut['id']
-        assert self.fn_pat.match(fn)
         self.path = join(appdir, fn)
 
         shortcut['categories'] = menu.name
