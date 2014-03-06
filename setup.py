@@ -18,7 +18,7 @@ else:
 
 
 setup(
-    name="appinst",
+    name="AppInst",
     version="2.1.4",
     description="cross platform APIs to install applications menu items",
     ext_modules=extensions,
