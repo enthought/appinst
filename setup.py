@@ -5,7 +5,7 @@ from setuptools import Extension, setup
 
 
 if sys.platform == "win32":
-    extensions = [Extension(
+    extensions=[Extension(
             "appinst.wininst",
             sources=["appinst/wininst.c"],
             include_dirs=["appinst"],
@@ -14,19 +14,19 @@ if sys.platform == "win32":
                        "uuid", "odbc32", "odbccp32"]
             )]
 else:
-    extensions = []
+    extensions=[]
 
 
 setup(
-    name = "appinst",
-    version = "2.1.3",
-    description = "cross platform APIs to install applications menu items",
-    ext_modules = extensions,
-    include_package_data = True,
-    package_data = {"appinst" : ["*.icns"]},
-    license = "BSD",
-    maintainer = "Enthought, Inc.",
-    maintainer_email = "info@enthought.com",
-    packages = ['appinst'],
-    zip_safe = False,
+    name="appinst",
+    version="2.1.4",
+    description="cross platform APIs to install applications menu items",
+    ext_modules=extensions,
+    include_package_data=True,
+    package_data={"appinst" : ["*.icns"]},
+    license="BSD",
+    maintainer="Enthought, Inc.",
+    maintainer_email="info@enthought.com",
+    packages=['appinst'],
+    zip_safe=False,
 )
