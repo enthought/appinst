@@ -1,0 +1,2 @@
+include appinst/wininst.c
+include appinst/resource.h
